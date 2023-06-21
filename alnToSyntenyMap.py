@@ -397,6 +397,13 @@ def flip_aln_pos(aln_dict, query_chrom, query_chrom_length):
 	# return the flipped alignments
 	return aln_dict
 
+# define a function thar writes the scaffold names in the correct order to a file, taking a genome dictionary as inputa
+def write_scaffolds(genome_file, outfile):
+	with open(outfile, "w") as of:
+		for i,chrom in enumerate(genome_file.keys()):
+			of.write("{}\t{}\t{}\n".format(i,chrom, genome_file[chrom]['length']))
+
+
 # prepare an argument parser
 parser = argparse.ArgumentParser(description='''this script will take alignments against a common reference genome and prepare a
 synteny map in a progressive manner''')
@@ -419,6 +426,8 @@ parser.add_argument('--minmapq', type=int, default=40, help='minimum mapping qua
 parser.add_argument('--minpid', type=float, default=0.9, help='minimum percent identity to keep in filter step, default is 0.9')
 # add argument with block size with which to create the syntenymap, default is 100kb
 parser.add_argument('--block_size', type=int, default=100000, help='block size with which to create the syntenymap, default is 100kb')
+# add a store true argument to specify is chromorder should be output for each genome
+parser.add_argument('--chromorder', action='store_true', help='if specified, will output the chromosome order for each genome')
 # parse arguments
 args = parser.parse_args()
 
@@ -451,11 +460,11 @@ def test_args(args):
 		# and exit
 		sys.exit()
 	# check that the output file name is valid
-	if '/' in args.output:
-		# if not, print an error message
-		print('ERROR: the output file name is not valid')
-		# and exit
-		sys.exit()
+	#if '/' in args.output:
+	#	# if not, print an error message
+	#	print('ERROR: the output file name is not valid')
+	#	# and exit
+	#	sys.exit()
 
 # test the arguments
 test_args(args)
@@ -509,6 +518,14 @@ for i,aln in enumerate(args.alignment):
 	# filter paf alignment dictionary based on a minimum alignment length, primary alignment, minimum mapping quality and minimum percent identity
 	aln_dict = filterPAF(aln_dict, minlen=args.minlen, primary=True, minmapq=args.minmapq, minpid=args.minpid, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=genomes[i].keys())
 	# testing without args. in argument
+	# check for each chromosome in the alingment if the majority of alignments are on the plus or minus strand
+	for chrom in genomes[i].keys():
+		strand = check_dominating_strand(chrom, aln_dict)
+	#	# if strand is minus, flip the alignments
+		if strand == '-':
+			print("flipping chrom {}".format(chrom))
+			aln_dict = flip_aln_pos(aln_dict, chrom, genomes[i][chrom]['length'])
+
 	#aln_dict = filterPAF(aln_dict, minlen=10000, primary=True, minmapq=40, minpid=0.9, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=genomes[i].keys())
 	# add the alignment dictionary to the list of alignment dictionaries
 	aln_dicts.append(aln_dict)
@@ -646,6 +663,15 @@ sys.stderr.write('writing the syntenymap to file\n')
 write_syntenyMap(results, args.output + '.syntenyMap.txt')
 # test wrute without args. in argument
 #write_syntenyMap(results, 'genomes.syntenyMap.txt')
+
+# if args crhomorder is true, output alsoe a file for each query genome with the chromosome order
+if args.chromorder == True:
+	# loop over the genomes enumerated
+	for i,genome in enumerate(genomes[1:]):
+		# use the basename input alignment file name but remove the .paf suffix, appended to the specified prefix
+		outfile = args.output + '.chromorder.' + os.path.basename(args.alignment[i]).replace('.paf', '') + '.txt'
+		# write the scaffolds in the correct order to file
+		write_scaffolds(genome, outfile)
 
 # print that we're done and how long it took
 sys.stderr.write('\n\n')
