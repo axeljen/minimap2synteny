@@ -8,7 +8,7 @@ args <- commandArgs(trailingOnly = TRUE)
 chromcords <- read.table(args[1], header = TRUE, sep = "\t")
 syntenyMap <- read.table(args[2], header = TRUE, sep = "\t")
 labels <- strsplit(args[3], ",")
-#labels <- strsplit("genome1,genome2,genome3,genome4", ",")
+
 
 # now for testing purposes, we will use the example data
 #chromcords <- read.table("genomes.chroms.txt", header = TRUE, sep = "\t")
