@@ -375,6 +375,84 @@ def check_dominating_strand(chrom,aln_dict):
 	# return the strand
 	return strand
 
+# define a function to convert alignments to synteny map
+def aln2syntenyMap(aln_dict):
+	# make a dictionary to store the results with query chroms as first layer of keys
+	results = {}
+	processed_pos = 0
+	# loop over the alignments
+	for aln in aln_dict:
+		# get the query chrom, start and end positions
+		qchrom,qstart,qend = aln['qseqname'],int(aln['qstart']),int(aln['qend'])
+		# and get the target chrom, start and end positions
+		tchrom,tstart,tend = aln['tseq'],int(aln['tstart']),int(aln['tend'])
+		# if the query chrom is not in the dictionary, add it
+		if qchrom not in results.keys():
+			results[qchrom] = []
+		# store the alignment twice, once also with target chrom as key
+		if not tchrom in results.keys():
+			results[tchrom] = []
+		# have a list of all the target positions
+		taken_targets = []
+		# now, calculate the factor by which to adjust the target position of each query position, by dividing the length of the alignment on the query genome with that of the target genome
+		#factor = (qend - qstart) / (tend - tstart)
+		results[qchrom].append([(qstart, qend), (tstart,tend), tchrom])
+		results[tchrom].append([(tstart,tend), (qstart, qend), qchrom])
+		#print(qstart,qend,tstart,tend)
+		# loop over the query positions
+		# for i in range(qstart, qend):
+			# calculate the target position
+			# target_pos = int(tstart + (i - qstart)) / factor
+			# check that this chrom and query pos is not already in the dictionary
+			#if int(qstart + i) in results[qchrom].keys():
+			 	# throw an error
+			# 	print('ERROR: this chrom and query pos is already in the dictionary')
+			# 	sys.exit()
+			# # and do the same for the target chrom and target pos
+			#if (tchrom, int(target_pos)) in taken_targets:
+			# 	# throw an error
+			# 	print('ERROR: this target chrom and target pos is already in the dictionary')
+			# 	sys.exit()
+			# # otherwise add a key to the dictionary with the query pos, and the target chrom and target pos as values
+			#results[qchrom].append((qstart + i, tchrom, target_pos))
+			# processed_pos += 1
+			# # and add the target chrom and target pos to the list of taken targets
+			# taken_targets.append((tchrom, int(target_pos)))
+	# return the results
+	return results
+
+# find target pos given a specific query pos
+def find_target_pos(query_chrom, query_pos, synmap):
+	# fetch the correct chrom from synmap
+	alns = synmap[query_chrom]
+	pos_found = False
+	# loop over the ranges
+	for aln in alns:
+		if query_pos >= aln[0][0] and query_pos <= aln[0][1]:
+			#print(aln)
+			# then fetch the target pos for this one
+			tchrom = aln[2]
+			tpos = aln[1][0] + ((query_pos - aln[0][0]) * len(range(aln[1][0],aln[1][1])) / len(range(aln[0][0],aln[0][1])))
+			pos_found = True
+			break
+	if pos_found == False:
+		return None, None
+	return tchrom, tpos
+
+
+
+# define a function to return a list of query chromosome with at least one alignment
+def get_query_chroms(aln_dict):
+	# make a list to store the query chroms
+	query_chroms = []
+	# loop over the alignments
+	for aln in aln_dict:
+		# if the query chrom is not in the list of query chroms, add it
+		if aln['qseqname'] not in query_chroms:
+			query_chroms.append(aln['qseqname'])
+	# return the list of query chroms
+	return query_chroms
+
 # define a function to flip alignment positions from minus to plus strand
 def flip_aln_pos(aln_dict, query_chrom, query_chrom_length):
 	# loop over the alignments
@@ -403,279 +481,283 @@ def write_scaffolds(genome_file, outfile):
 		for i,chrom in enumerate(genome_file.keys()):
 			of.write("{}\t{}\t{}\n".format(i,chrom, genome_file[chrom]['length']))
 
+# if name is main
+if __name__ == '__main__':
+	# prepare an argument parser
+	parser = argparse.ArgumentParser(description='''this script will take alignments against a common reference genome and prepare a
+	synteny map in a progressive manner''')
+	# add arguments to parse
+	# fasta index file of reference genome, using --reference or -r, required
+	parser.add_argument('--reference', '-r', type=str, required=True, help='the fasta index file of reference genome')
+	# option to add as many alignment files as wanted, using --alignment or -aln, at least one is required
+	parser.add_argument('--alignment', '-aln', type=str, required=True, nargs='+', help='alignment in paf format to the reference genome')
+	# each alignment file should have an index file, using --index or -i, required
+	parser.add_argument('--index', '-i', type=str, required=True, nargs='+', help='index file of the alignment file')
+	# output file name, using --output or -o, default is "syntenyMap.txt"
+	parser.add_argument('--output', '-o', type=str, default='genomes', help='output file prefix, will be used to create two files: <output>.chromdicts.txt and <output>.syntenyMap.txt')
+	# add argument to supply spacing to plot, defaulting to 20mb
+	parser.add_argument('--spacing', type=int, default=20000000, help='spacing between reference genome chromosomes in the plot, default is 20mb')
+	# add argument for minimum alignment length to keep in filter step
+	parser.add_argument('--minlen', type=int, default=10000, help='minimum alignment length to keep in filter step, default is 10kb')
+	# minimum mapping quality to keep in filter step
+	parser.add_argument('--minmapq', type=int, default=40, help='minimum mapping quality to keep in filter step, default is 40')
+	# minimum percent identity to keep in filter step
+	parser.add_argument('--minpid', type=float, default=0.9, help='minimum percent identity to keep in filter step, default is 0.9')
+	# add argument with block size with which to create the syntenymap, default is 100kb
+	parser.add_argument('--block_size', type=int, default=100000, help='block size with which to create the syntenymap, default is 100kb')
+	# add a store true argument to specify is chromorder should be output for each genome
+	parser.add_argument('--chromorder', action='store_true', help='if specified, will output the chromosome order for each genome')
+	# an option to not flip chromosomes, just for testing
+	parser.add_argument('--no_flip', action='store_true', help='if specified, will not flip the chromosomes that aligned to the negative strand')
+	# parse arguments
+	args = parser.parse_args()
 
-# prepare an argument parser
-parser = argparse.ArgumentParser(description='''this script will take alignments against a common reference genome and prepare a
-synteny map in a progressive manner''')
-# add arguments to parse
-# fasta index file of reference genome, using --reference or -r, required
-parser.add_argument('--reference', '-r', type=str, required=True, help='the fasta index file of reference genome')
-# option to add as many alignment files as wanted, using --alignment or -aln, at least one is required
-parser.add_argument('--alignment', '-aln', type=str, required=True, nargs='+', help='alignment in paf format to the reference genome')
-# each alignment file should have an index file, using --index or -i, required
-parser.add_argument('--index', '-i', type=str, required=True, nargs='+', help='index file of the alignment file')
-# output file name, using --output or -o, default is "syntenyMap.txt"
-parser.add_argument('--output', '-o', type=str, default='genomes', help='output file prefix, will be used to create two files: <output>.chromdicts.txt and <output>.syntenyMap.txt')
-# add argument to supply spacing to plot, defaulting to 20mb
-parser.add_argument('--spacing', type=int, default=20000000, help='spacing between reference genome chromosomes in the plot, default is 20mb')
-# add argument for minimum alignment length to keep in filter step
-parser.add_argument('--minlen', type=int, default=10000, help='minimum alignment length to keep in filter step, default is 10kb')
-# minimum mapping quality to keep in filter step
-parser.add_argument('--minmapq', type=int, default=40, help='minimum mapping quality to keep in filter step, default is 40')
-# minimum percent identity to keep in filter step
-parser.add_argument('--minpid', type=float, default=0.9, help='minimum percent identity to keep in filter step, default is 0.9')
-# add argument with block size with which to create the syntenymap, default is 100kb
-parser.add_argument('--block_size', type=int, default=100000, help='block size with which to create the syntenymap, default is 100kb')
-# add a store true argument to specify is chromorder should be output for each genome
-parser.add_argument('--chromorder', action='store_true', help='if specified, will output the chromosome order for each genome')
-# parse arguments
-args = parser.parse_args()
-
-# define a function that tests that all arguments are valid
-def test_args(args):
-	# check that the reference genome index file exists
-	if not os.path.isfile(args.reference):
-		# if not, print an error message
-		print('ERROR: the reference genome index file does not exist')
-		# and exit
-		sys.exit()
-	# check that the alignment files exist
-	for aln in args.alignment:
-		if not os.path.isfile(aln):
+	# define a function that tests that all arguments are valid
+	def test_args(args):
+		# check that the reference genome index file exists
+		if not os.path.isfile(args.reference):
 			# if not, print an error message
-			print('ERROR: the alignment file does not exist')
+			print('ERROR: the reference genome index file does not exist')
 			# and exit
 			sys.exit()
-	# check that the index files exist
+		# check that the alignment files exist
+		for aln in args.alignment:
+			if not os.path.isfile(aln):
+				# if not, print an error message
+				print('ERROR: the alignment file does not exist')
+				# and exit
+				sys.exit()
+		# check that the index files exist
+		for index in args.index:
+			if not os.path.isfile(index):
+				# if not, print an error message
+				print('ERROR: the index file does not exist')
+				# and exit
+				sys.exit()
+		# check that the number of alignment files is the same as the number of index files
+		if len(args.alignment) != len(args.index):
+			# if not, print an error message
+			print('ERROR: the number of alignment files is not the same as the number of index files')
+			# and exit
+			sys.exit()
+		# check that the output file name is valid
+		#if '/' in args.output:
+		#	# if not, print an error message
+		#	print('ERROR: the output file name is not valid')
+		#	# and exit
+		#	sys.exit()
+
+	# test the arguments
+	test_args(args)
+
+	# print current date and time to standard error, a few newlines on both sites for readability
+	sys.stderr.write('\n\n')
+	sys.stderr.write('Script started at:\n')
+	os.system('date')
+	sys.stderr.write('\n\n')
+
+	# print commands as executed to standard error
+	sys.stderr.write('Script executed as:\n')
+	sys.stderr.write(' '.join(sys.argv) + '\n')
+
+
+	# read the reference genome index file and return a dictionary
+	# print('reading the reference genome file') to standard error
+	sys.stderr.write('reading the reference genome file from\n{}\n'.format(args.reference))
+	refgenome = read_ref_index(args.reference)
+	# testing
+	#refgenome = read_ref_index("mmul_chroms.fai")
+	# add cumulative starting position of the chromosomes in the reference genome, adding spacing between chromosomes based on a total length to fit the genome plot
+	# print('adding cumulative starting position of the chromosomes in the reference genome') to standard error
+	refgenome = add_cumulative_starting_position(refgenome, plotlen=None, spacing=args.spacing)
+	# testing
+	#refgenome = add_cumulative_starting_position(refgenome, plotlen=None, spacing=20000000)
+
+
+	# make a list to store the alignment dictionaries
+	aln_dicts = []
+	# and a list to store the index/genome files
+	genomes = []
+	# append parsed index files to the list
 	for index in args.index:
-		if not os.path.isfile(index):
-			# if not, print an error message
-			print('ERROR: the index file does not exist')
-			# and exit
-			sys.exit()
-	# check that the number of alignment files is the same as the number of index files
-	if len(args.alignment) != len(args.index):
-		# if not, print an error message
-		print('ERROR: the number of alignment files is not the same as the number of index files')
-		# and exit
-		sys.exit()
-	# check that the output file name is valid
-	#if '/' in args.output:
-	#	# if not, print an error message
-	#	print('ERROR: the output file name is not valid')
-	#	# and exit
-	#	sys.exit()
+		genomes.append(read_ref_index(index))
 
-# test the arguments
-test_args(args)
+	# testing
+	#for index in ['Cercopithecus_diana_hap1_repeatinput.fa.fai','Allochrocebus_lhoesti_hap1_repeatinput.fa.fai']:
+	#	genomes.append(read_ref_index(index))
+	aln_dicts_raw = []
+	# loop over the alignment files
+	for i,aln in enumerate(args.alignment):
+	# testing
+	#for i,aln in enumerate(['map_Cercopithecus_diana_hap1_asm_ref.paf','map_Allochrocebus_lhoesti_hap1_asm_ref.paf']):
+		# print('reading the alignment file') to standard error
+		sys.stderr.write('reading the alignment file from\n{}\n'.format(aln))
+		# parse the paf alignments to dictionary
+		aln_dict = parsePAF(aln)
+		# print('filtering the alignments') to standard error
+		sys.stderr.write('filtering the alignments\n')
+		# filter paf alignment dictionary based on a minimum alignment length, primary alignment, minimum mapping quality and minimum percent identity
+		aln_dict = filterPAF(aln_dict, minlen=args.minlen, primary=True, minmapq=args.minmapq, minpid=args.minpid, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=genomes[i].keys())
+		# testing without args. in argument
+		# check for each chromosome in the alingment if the majority of alignments are on the plus or minus strand
+		if not args.no_flip:
+			for chrom in genomes[i].keys():
+				strand = check_dominating_strand(chrom, aln_dict)
+			# if strand is minus, flip the alignments
+				if strand == '-':
+					print("flipping chrom {}".format(chrom))
+					aln_dict = flip_aln_pos(aln_dict, chrom, genomes[i][chrom]['length'])
 
-# print current date and time to standard error, a few newlines on both sites for readability
-sys.stderr.write('\n\n')
-sys.stderr.write('Script started at:\n')
-os.system('date')
-sys.stderr.write('\n\n')
+		#aln_dict = filterPAF(aln_dict, minlen=10000, primary=True, minmapq=40, minpid=0.9, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=genomes[i].keys())
+		# add the alignment dictionary to the list of alignment dictionaries
+		aln_dicts.append(aln_dict)
+		# that will be our main dict that we'll used for all the filtration step, but also append them to a raw dictlist where we'll keep the original alignments
+		aln_dicts_raw.append(cp.deepcopy(aln_dict))
 
-# print commands as executed to standard error
-sys.stderr.write('Script executed as:\n')
-sys.stderr.write(' '.join(sys.argv) + '\n')
-
-
-# read the reference genome index file and return a dictionary
-# print('reading the reference genome file') to standard error
-sys.stderr.write('reading the reference genome file from\n{}\n'.format(args.reference))
-refgenome = read_ref_index(args.reference)
-# testing
-#refgenome = read_ref_index("mmul_chroms.fai")
-# add cumulative starting position of the chromosomes in the reference genome, adding spacing between chromosomes based on a total length to fit the genome plot
-# print('adding cumulative starting position of the chromosomes in the reference genome') to standard error
-refgenome = add_cumulative_starting_position(refgenome, plotlen=None, spacing=args.spacing)
-# testing
-#refgenome = add_cumulative_starting_position(refgenome, plotlen=None, spacing=20000000)
+	# print how long alignments remain after filtering for each alignment
+	for i,aln_dict in enumerate(aln_dicts):
+		alnlen = sum_aln_len(aln_dict)
+		sys.stderr.write('after filtering, {} bp alignment remain in alignment file {}\n'.format(alnlen, i + 1))
 
 
-# make a list to store the alignment dictionaries
-aln_dicts = []
-# and a list to store the index/genome files
-genomes = []
-# append parsed index files to the list
-for index in args.index:
-	genomes.append(read_ref_index(index))
-
-# testing
-#for index in ['Cercopithecus_diana_hap1_repeatinput.fa.fai','Allochrocebus_lhoesti_hap1_repeatinput.fa.fai']:
-#	genomes.append(read_ref_index(index))
-aln_dicts_raw = []
-# loop over the alignment files
-for i,aln in enumerate(args.alignment):
-# testing
-#for i,aln in enumerate(['map_Cercopithecus_diana_hap1_asm_ref.paf','map_Allochrocebus_lhoesti_hap1_asm_ref.paf']):
-	# print('reading the alignment file') to standard error
-	sys.stderr.write('reading the alignment file from\n{}\n'.format(aln))
-	# parse the paf alignments to dictionary
-	aln_dict = parsePAF(aln)
-	# print('filtering the alignments') to standard error
-	sys.stderr.write('filtering the alignments\n')
-	# filter paf alignment dictionary based on a minimum alignment length, primary alignment, minimum mapping quality and minimum percent identity
-	aln_dict = filterPAF(aln_dict, minlen=args.minlen, primary=True, minmapq=args.minmapq, minpid=args.minpid, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=genomes[i].keys())
-	# testing without args. in argument
-	# check for each chromosome in the alingment if the majority of alignments are on the plus or minus strand
-	for chrom in genomes[i].keys():
-		strand = check_dominating_strand(chrom, aln_dict)
-	#	# if strand is minus, flip the alignments
-		if strand == '-':
-			print("flipping chrom {}".format(chrom))
-			aln_dict = flip_aln_pos(aln_dict, chrom, genomes[i][chrom]['length'])
-
-	#aln_dict = filterPAF(aln_dict, minlen=10000, primary=True, minmapq=40, minpid=0.9, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=genomes[i].keys())
-	# add the alignment dictionary to the list of alignment dictionaries
-	aln_dicts.append(aln_dict)
-	# that will be our main dict that we'll used for all the filtration step, but also append them to a raw dictlist where we'll keep the original alignments
-	aln_dicts_raw.append(cp.deepcopy(aln_dict))
-
-# print how long alignments remain after filtering for each alignment
-for i,aln_dict in enumerate(aln_dicts):
-	alnlen = sum_aln_len(aln_dict)
-	sys.stderr.write('after filtering, {} bp alignment remain in alignment file {}\n'.format(alnlen, i + 1))
-
-
-# the first dict in the dictlist will be directly projected onto the reference genome, so start with processing this one
-# print('splitting the alignments by query chromosome') to standard error
-sys.stderr.write('splitting the alignments by query chromosome\n')
-# split the alignments by query chromosome
-aln_dict_split_by_chrom = split_aln_by_query_chrom(aln_dicts[0])
-# find the median target position for each query chromosome
-# print('finding the median target position for each query chromosome') to standard error
-sys.stderr.write('finding the median target position for each query chromosome\n')
-# add the median target position to the dictionary
-for chrom in aln_dict_split_by_chrom.keys():
-# 	# check if the majority of alignments are on the plus or minus strand
-# 	strand = check_dominating_strand(chrom, aln_dicts[0])
-# 	# if strand is minus, flip the alignments
-# 	if strand == '-':
-# 		print("flipping chrom {}".format(chrom))
-# 		aln_dicts[i] = flip_aln_pos(aln_dicts[0], chrom, genomes[0][chrom]['length'])
-	genomes[0][chrom]['median'] = find_mean_median_target_pos(chrom, aln_dict_split_by_chrom[chrom], refgenome)[1]
-# sort the chromosomes based on median target position
-# print('sorting the chromosomes based on median target position') to standard error
-sys.stderr.write('sorting the chromosomes based on median target position\n')
-# sort the chromosomes based on median target position
-sorted_chromosomes = sort_chromosomes(genomes[0], sort_by='median')
-# reorder the chromosomes based on median target position
-# print('reordering the chromosomes based on median target position') to standard error
-sys.stderr.write('reordering the chromosomes based on median target position\n')
-# reorder the chromosomes based on median target position
-genomes[0] = reorder_chromosomes(genomes[0], sort_by='median')
-
-# get the plot length by taking the highest cumulative position in the reference genome + the length of the last chromosome
-plotlen = refgenome[list(refgenome.keys())[-1]]['cumpos'] + refgenome[list(refgenome.keys())[-1]]['length']
-# add the cumulative starting position in relation to reference genome to the alignments in this first alignment dictionary
-# print('adding the cumulative starting position in relation to reference genome to the alignments in this first alignment dictionary') to standard error
-sys.stderr.write('adding the cumulative starting position in relation to reference genome to the alignments in this first alignment dictionary\n')
-# add the cumulative starting position to all the chroms in the first genome
-genomes[0] = add_cumulative_starting_position(genomes[0], plotlen=plotlen, spacing=None)
-
-# prep a list of list to store the results
-results = [[]]
-# get syntenymap for the first query genome
-# print('getting syntenymap for the first query genome') to standard error
-sys.stderr.write('making the syntenymap for the first query genome\n')
-# get syntenymap for the first query genome
-for chrom in genomes[0].keys():
-	# get the results for this query chromosome
-	results[0] += find_ref_pos_window(chrom, genomes[0][chrom]['length'], refgenome, aln_dict_split_by_chrom[chrom], window_size=args.block_size)
-	# testing without args. in argument
-	#results[0] += find_ref_pos_window(chrom, genomes[0][chrom]['length'], refgenome, aln_dict_split_by_chrom[chrom], window_size=100000)
-# loop over the rest of the alignment dictionaries
-for i in range(1,len(aln_dicts)):
-	# check if we need to flip any chromosomes
-	# for chrom in genomes[i]:
+	# the first dict in the dictlist will be directly projected onto the reference genome, so start with processing this one
+	# print('splitting the alignments by query chromosome') to standard error
+	sys.stderr.write('splitting the alignments by query chromosome\n')
+	# split the alignments by query chromosome
+	aln_dict_split_by_chrom = split_aln_by_query_chrom(aln_dicts[0])
+	# find the median target position for each query chromosome
+	# print('finding the median target position for each query chromosome') to standard error
+	sys.stderr.write('finding the median target position for each query chromosome\n')
+	# add the median target position to the dictionary
+	for chrom in aln_dict_split_by_chrom.keys():
 	# 	# check if the majority of alignments are on the plus or minus strand
-	# 	strand = check_dominating_strand(chrom, aln_dicts[i])
+	# 	strand = check_dominating_strand(chrom, aln_dicts[0])
 	# 	# if strand is minus, flip the alignments
 	# 	if strand == '-':
 	# 		print("flipping chrom {}".format(chrom))
-	# 		aln_dicts[i] = flip_aln_pos(aln_dicts[i], chrom, genomes[i][chrom]['length'])
-	# convert target coordinates to the query genome of the previous alignment dictionary
-	# print('converting target coordinates to the query genome of the previous alignment dictionary') to standard error
-	sys.stderr.write('converting target coordinates of genome {} to fit genome {}\n'.format(args.alignment[i], args.alignment[i - 1]))
-	# test print the same line wihtout args. in argument
-	#sys.stderr.write('converting target coordinates of genome {} to fit genome {}\n'.format(genomes[i], genomes[i -1]))
-	sys.stderr.write('this may take a while...\n')
-	# split the alignments by reference chromosome
-	target_dict_split_by_ref_chrom = split_aln_by_ref_chrom(aln_dicts_raw[i - 1])
-	for aln in aln_dicts[i]:
-		# convert the target start and end positions to query start and end positions
-		aln['tseq'], aln['tstart'], aln['tend'] = find_query_pos(aln['tseq'], int(aln['tstart']), int(aln['tend']), target_dict_split_by_ref_chrom)
-
-
-# sort the remaining genomes based on median target position
-# print('sorting the remaining genomes based on median target position') to standard error
-sys.stderr.write('progressively sorting the genomes based on median target position\n')
-# sort the remaining genomes based on median target position
-for i in range(1,len(aln_dicts)):
-	# split the alignments by query chromosome
-	aln_dict_split_by_chrom = split_aln_by_query_chrom(aln_dicts[i])
-	# add the median target position to the dictionary
-	for chrom in aln_dict_split_by_chrom.keys():
-		#print(chrom, genomes[i - 1])
-		genomes[i][chrom]['median'] = find_mean_median_target_pos(chrom, aln_dict_split_by_chrom[chrom], genomes[i - 1])[1]
+	# 		aln_dicts[i] = flip_aln_pos(aln_dicts[0], chrom, genomes[0][chrom]['length'])
+		genomes[0][chrom]['median'] = find_mean_median_target_pos(chrom, aln_dict_split_by_chrom[chrom], refgenome)[1]
 	# sort the chromosomes based on median target position
-	sorted_chromosomes = sort_chromosomes(genomes[i], sort_by='median')
+	# print('sorting the chromosomes based on median target position') to standard error
+	sys.stderr.write('sorting the chromosomes based on median target position\n')
+	# sort the chromosomes based on median target position
+	sorted_chromosomes = sort_chromosomes(genomes[0], sort_by='median')
 	# reorder the chromosomes based on median target position
-	genomes[i] = reorder_chromosomes(genomes[i], sort_by='median')
-	# add cumulative starting position to this genome
-	genomes[i] = add_cumulative_starting_position(genomes[i], plotlen=plotlen, spacing=None)
+	# print('reordering the chromosomes based on median target position') to standard error
+	sys.stderr.write('reordering the chromosomes based on median target position\n')
+	# reorder the chromosomes based on median target position
+	genomes[0] = reorder_chromosomes(genomes[0], sort_by='median')
 
-# make a syntenymap for the remaining genomes
-# print('making a syntenymap for the remaining genomes') to standard error
-sys.stderr.write('making a syntenymap for the remaining genomes\n')
-# make a syntenymap for the remaining genomes
-for i in range(1,len(aln_dicts)):
-	# append an empty list to the results
-	results.append([])
-	# split by chrom again
-	aln_dict_split_by_chrom = split_aln_by_query_chrom(aln_dicts[i])
-	# loop over chromosomes
-	for chrom in genomes[i].keys():
+	# get the plot length by taking the highest cumulative position in the reference genome + the length of the last chromosome
+	plotlen = refgenome[list(refgenome.keys())[-1]]['cumpos'] + refgenome[list(refgenome.keys())[-1]]['length']
+	# add the cumulative starting position in relation to reference genome to the alignments in this first alignment dictionary
+	# print('adding the cumulative starting position in relation to reference genome to the alignments in this first alignment dictionary') to standard error
+	sys.stderr.write('adding the cumulative starting position in relation to reference genome to the alignments in this first alignment dictionary\n')
+	# add the cumulative starting position to all the chroms in the first genome
+	genomes[0] = add_cumulative_starting_position(genomes[0], plotlen=plotlen, spacing=None)
+
+	# prep a list of list to store the results
+	results = [[]]
+	# get syntenymap for the first query genome
+	# print('getting syntenymap for the first query genome') to standard error
+	sys.stderr.write('making the syntenymap for the first query genome\n')
+	# get syntenymap for the first query genome
+	for chrom in genomes[0].keys():
 		# get the results for this query chromosome
-		results[i] += find_ref_pos_window(chrom, genomes[i][chrom]['length'], genomes[i-1], aln_dict_split_by_chrom[chrom], window_size=args.block_size)
+		results[0] += find_ref_pos_window(chrom, genomes[0][chrom]['length'], refgenome, aln_dict_split_by_chrom[chrom], window_size=args.block_size)
 		# testing without args. in argument
-		#results[i] += find_ref_pos_window(chrom, genomes[i][chrom]['length'], genomes[i-1], aln_dict_split_by_chrom[chrom], window_size=100000)
+		#results[0] += find_ref_pos_window(chrom, genomes[0][chrom]['length'], refgenome, aln_dict_split_by_chrom[chrom], window_size=100000)
+	# loop over the rest of the alignment dictionaries
+	for i in range(1,len(aln_dicts)):
+		# check if we need to flip any chromosomes
+		# for chrom in genomes[i]:
+		# 	# check if the majority of alignments are on the plus or minus strand
+		# 	strand = check_dominating_strand(chrom, aln_dicts[i])
+		# 	# if strand is minus, flip the alignments
+		# 	if strand == '-':
+		# 		print("flipping chrom {}".format(chrom))
+		# 		aln_dicts[i] = flip_aln_pos(aln_dicts[i], chrom, genomes[i][chrom]['length'])
+		# convert target coordinates to the query genome of the previous alignment dictionary
+		# print('converting target coordinates to the query genome of the previous alignment dictionary') to standard error
+		sys.stderr.write('converting target coordinates of genome {} to fit genome {}\n'.format(args.alignment[i], args.alignment[i - 1]))
+		# test print the same line wihtout args. in argument
+		#sys.stderr.write('converting target coordinates of genome {} to fit genome {}\n'.format(genomes[i], genomes[i -1]))
+		sys.stderr.write('this may take a while...\n')
+		# split the alignments by reference chromosome
+		target_dict_split_by_ref_chrom = split_aln_by_ref_chrom(aln_dicts_raw[i - 1])
+		for aln in aln_dicts[i]:
+			# convert the target start and end positions to query start and end positions
+			aln['tseq'], aln['tstart'], aln['tend'] = find_query_pos(aln['tseq'], int(aln['tstart']), int(aln['tend']), target_dict_split_by_ref_chrom)
 
-# convert the results query pos to cumulative position
-for i,resultlist in enumerate(results):
-	for result in resultlist:
-		result['query_pos'] = chrompos2cumpos(result['query_chrom'], result['query_pos'], genomes[i])
 
-# write the chromdicts to file
-# print('writing the chromdicts to file') to standard error
-sys.stderr.write('writing the chromdicts to file\n')
-# add refgenome to first position in list of genomes
-genomes.insert(0, refgenome)
-# write the chromdicts to file
-write_chromdicts(genomes, args.output + '.chroms.txt')
-# test write without args. in argument
-#write_chromdicts(genomes, 'genomes.chroms.txt')
-# write the syntenymap to file
-# print('writing the syntenymap to file') to standard error
-sys.stderr.write('writing the syntenymap to file\n')
-# write the syntenymap to file
-write_syntenyMap(results, args.output + '.syntenyMap.txt')
-# test wrute without args. in argument
-#write_syntenyMap(results, 'genomes.syntenyMap.txt')
+	# sort the remaining genomes based on median target position
+	# print('sorting the remaining genomes based on median target position') to standard error
+	sys.stderr.write('progressively sorting the genomes based on median target position\n')
+	# sort the remaining genomes based on median target position
+	for i in range(1,len(aln_dicts)):
+		# split the alignments by query chromosome
+		aln_dict_split_by_chrom = split_aln_by_query_chrom(aln_dicts[i])
+		# add the median target position to the dictionary
+		for chrom in aln_dict_split_by_chrom.keys():
+			#print(chrom, genomes[i - 1])
+			genomes[i][chrom]['median'] = find_mean_median_target_pos(chrom, aln_dict_split_by_chrom[chrom], genomes[i - 1])[1]
+		# sort the chromosomes based on median target position
+		sorted_chromosomes = sort_chromosomes(genomes[i], sort_by='median')
+		# reorder the chromosomes based on median target position
+		genomes[i] = reorder_chromosomes(genomes[i], sort_by='median')
+		# add cumulative starting position to this genome
+		genomes[i] = add_cumulative_starting_position(genomes[i], plotlen=plotlen, spacing=None)
 
-# if args crhomorder is true, output alsoe a file for each query genome with the chromosome order
-if args.chromorder == True:
-	# loop over the genomes enumerated
-	for i,genome in enumerate(genomes[1:]):
-		# use the basename input alignment file name but remove the .paf suffix, appended to the specified prefix
-		outfile = args.output + '.chromorder.' + os.path.basename(args.alignment[i]).replace('.paf', '') + '.txt'
-		# write the scaffolds in the correct order to file
-		write_scaffolds(genome, outfile)
+	# make a syntenymap for the remaining genomes
+	# print('making a syntenymap for the remaining genomes') to standard error
+	sys.stderr.write('making a syntenymap for the remaining genomes\n')
+	# make a syntenymap for the remaining genomes
+	for i in range(1,len(aln_dicts)):
+		# append an empty list to the results
+		results.append([])
+		# split by chrom again
+		aln_dict_split_by_chrom = split_aln_by_query_chrom(aln_dicts[i])
+		# loop over chromosomes
+		for chrom in genomes[i].keys():
+			# get the results for this query chromosome
+			results[i] += find_ref_pos_window(chrom, genomes[i][chrom]['length'], genomes[i-1], aln_dict_split_by_chrom[chrom], window_size=args.block_size)
+			# testing without args. in argument
+			#results[i] += find_ref_pos_window(chrom, genomes[i][chrom]['length'], genomes[i-1], aln_dict_split_by_chrom[chrom], window_size=100000)
 
-# print that we're done and how long it took
-sys.stderr.write('\n\n')
-sys.stderr.write('Script finished at:\n')
-os.system('date')
-# total time
-sys.stderr.write('\n\n')
+	# convert the results query pos to cumulative position
+	for i,resultlist in enumerate(results):
+		for result in resultlist:
+			result['query_pos'] = chrompos2cumpos(result['query_chrom'], result['query_pos'], genomes[i])
+
+	# write the chromdicts to file
+	# print('writing the chromdicts to file') to standard error
+	sys.stderr.write('writing the chromdicts to file\n')
+	# add refgenome to first position in list of genomes
+	genomes.insert(0, refgenome)
+	# write the chromdicts to file
+	write_chromdicts(genomes, args.output + '.chroms.txt')
+	# test write without args. in argument
+	#write_chromdicts(genomes, 'genomes.chroms.txt')
+	# write the syntenymap to file
+	# print('writing the syntenymap to file') to standard error
+	sys.stderr.write('writing the syntenymap to file\n')
+	# write the syntenymap to file
+	write_syntenyMap(results, args.output + '.syntenyMap.txt')
+	# test wrute without args. in argument
+	#write_syntenyMap(results, 'genomes.syntenyMap.txt')
+
+	# if args crhomorder is true, output alsoe a file for each query genome with the chromosome order
+	if args.chromorder == True:
+		# loop over the genomes enumerated
+		for i,genome in enumerate(genomes[1:]):
+			# use the basename input alignment file name but remove the .paf suffix, appended to the specified prefix
+			outfile = args.output + '.chromorder.' + os.path.basename(args.alignment[i]).replace('.paf', '') + '.txt'
+			# write the scaffolds in the correct order to file
+			write_scaffolds(genome, outfile)
+
+	# print that we're done and how long it took
+	sys.stderr.write('\n\n')
+	sys.stderr.write('Script finished at:\n')
+	os.system('date')
+	# total time
+	sys.stderr.write('\n\n')

@@ -30,3 +30,22 @@ The above script will create two files: output_prefix.chroms.txt and output_pref
 Rscript plotSyntenyMaps.R output_prefix.chroms.txt output_prefix.syntenyMap.txt (label_refgenome,label_genome1,label_genome2...)
 
 Will output an svg file in the same directory as the syntenymap is stored.
+
+
+# Identify rearrangements
+
+The script identifyRearrangements.py outputs three tables (largely overlapping with the above scripts) given an alignment, refgenome file and query genome file as input:
+- The two genomes sorted by ref coordinates
+- syntenymap between the two
+- identified rearrangements (translocations, inversions, fissions and fusions)
+
+run as: 
+python3 identifyRearrangements.py -a alignment.paf \
+  -q query_genomefile.txt \
+  -r ref_genomefile.txt \
+  -o outprefix
+
+Output cak be plotted with the plotChromRearrangements.R:
+Rscript plotChromRearrangements.R outprefix.genomes.txt outprefix.syntenymap.txt outprefix.rearrangements.txt
+
+Note that this script so far only works with pairwise comparisons.
