@@ -122,7 +122,7 @@ def identify_inversions(blocks):
 
 # function to remove blocks shorter than length_limit
 def remove_short_blocks(blocks, length_limit):
-	blocks = [x for x in blocks if x['tend'] - x['tstart'] > length_limit]
+	blocks = [x for x in blocks if x['tend'] - x['tstart'] > length_limit and abs(x['qend'] - x['qstart']) > length_limit]
 	return blocks
 
 
@@ -260,6 +260,38 @@ def write_genomes(qgenome_sorted, qgenome, refgenome, outfile):
 	for chrom in qgenome_sorted:
 		outfile.write("{}\t{}\t{}\n".format(chrom, qgenome[chrom]['length'], "query"))
 
+# define a function to merge consecutive blocks, if their of the same type, on the same chroms and no more than maxdist apart
+def merge_consecutive_blocks(blocks, maxdist=5000000):
+	blocks_merged = []
+	# make sure blocks are sorted by tchrom and tstart
+	blocks = sorted(blocks, key=lambda k: (k['tchrom'], k['tstart']))
+	# add the first block to the list
+	blocks_merged.append(blocks[0])
+	# loop through the blocks
+	for i in range(1,len(blocks)):
+		merged = False
+		# if tchrom and qchrom is the same 
+		if blocks[i]['tchrom'] == blocks[i-1]['tchrom'] and blocks[i]['qchrom'] == blocks[i-1]['qchrom']:
+			# if q-order is one up from the previous block, (or down) from the previous block
+			if abs(blocks[i]['q-order'] == blocks_merged[-1]['q-order']) == 1:
+				# if direction is the same as the previous block
+				if blocks[i]['direction'] == blocks_merged[-1]['direction']:
+					# if the maxdist is less than maxdist on both target and query
+					if abs(blocks[i]['tstart'] - blocks_merged[-1]['tend']) < maxdist and abs(blocks[i]['qstart'] - blocks_merged[-1]['qend']) < maxdist:
+						# merge the blocks
+						blocks_merged[-1]['tend'] = blocks[i]['tend']
+						blocks_merged[-1]['qend'] = blocks[i]['qend']
+						blocks_merged[-1]['q-order'] = blocks[i]['q-order']
+						blocks_merged[-1]['order'] = blocks[i]['order']
+						merged = True
+		# if the blocks were not merged, add the block to the list
+		if not merged:
+			blocks_merged.append(blocks[i])
+	# return the merged blocks
+	return blocks_merged
+
+
+
 # prepare the argument parser
 parser = argparse.ArgumentParser(description='Parse a PAF whole genome alignment file and make a synteny map, and identify large-scale genome rearrangements.')
 # alignment file
@@ -336,14 +368,11 @@ synmap_tf = remove_none_target_positions(synmap_t)
 # merge consecutive dicts into blocks
 blocks = merge_consecutive_dicts(synmap_tf, maxdiff=5000000)
 
-# print blocks as table
-#print_dict_as_table(blocks)
+# remove blocks shorter than length_limit
+blocks = remove_short_blocks(blocks, length_limit)
 
 # identify inversions
 blocks, inversions = identify_inversions(blocks)
-
-# remove blocks shorter than length_limit
-blocks = remove_short_blocks(blocks, length_limit)
 
 # swap qstart and qend for inversions
 blocks = swap_qstart_qend_inversions(blocks)
@@ -371,6 +400,9 @@ fissions = find_fissions(blocks)
 
 # fetch fusions
 fusions = find_fusions(blocks)
+
+# merge consecutive blocks
+blocks = merge_consecutive_blocks(blocks, maxdist=5000000)
 
 # before writing, we need to sort the query genome by ascending target pos
 # get cumulative starting pos by summing the length of all previous chroms
