@@ -7,11 +7,14 @@ library(scales)
 args <- commandArgs(trailingOnly = TRUE)
 
 # fetch genomes file
+#genomes <- read_tsv("/Users/axeljensen/Dropbox/syntenymaps_testing/test_genomes.txt")
 genomes <- read_tsv(args[1],
                       col_names = T)
 # syntenymap
+#synmap <- read_tsv("/Users/axeljensen/Dropbox/syntenymaps_testing/test_syntenymap.txt")
 synmap <- read_tsv(args[2])
 # rearrangements
+#rearrangements <- read_tsv("/Users/axeljensen/Dropbox/syntenymaps_testing/out_rearrangements.txt")
 rearrangements <- read_tsv(args[3])
 
 # split the ref and query genome into different df
@@ -73,30 +76,36 @@ geom_curve(synmap, mapping = aes(x = refcum, xend = refcum,
                linewidth = 1.5, lineend = "round", color = "white") +
   theme_void() +
   theme(legend.position = "none")
-
+p
 # add cumpos to rearrangments
 rearr <- rearrangements %>%
-  mutate(refstart = as.numeric(refstart),
-         refend = as.numeric(refend),
-         querystart = as.numeric(querystart),
-         queryend = as.numeric(queryend)) %>%
-  mutate(cumstart = refstart + gens$cumstart[match(refchrom,gens$chrom)],
-         cumend = refend + gens$cumstart[match(refchrom,gens$chrom)])
+  mutate(refstart_1 = as.numeric(refstart_1),
+         refstart_2 = as.numeric(refstart_2),
+         refend_1 = as.numeric(refend_1),
+         refend_2 = as.numeric(refend_2),
+         querystart_1 = as.numeric(querystart_1),
+         querystart_2 = as.numeric(querystart_2),
+         queryend_1 = as.numeric(queryend_1),
+          queryend_2 = as.numeric(queryend_2)) %>%
+  mutate(cumstart_1 = refstart_1 + gens$cumstart[match(refchrom_1,gens$chrom)],
+         cumend_1 = refend_1 + gens$cumstart[match(refchrom_1,gens$chrom)],
+          cumstart_2 = refstart_2 + gens$cumstart[match(refchrom_2,gens$chrom)],
+          cumend_2 = refend_2 + gens$cumstart[match(refchrom_2,gens$chrom)]) %>%
+  mutate(x_1 = cumstart_1 + ((cumend_1 - cumstart_1) / 2),
+         x_2 = cumstart_2 + ((cumend_2 - cumstart_2) / 2))
 
 # plot fissions as vertical lines on top of ref genome
-p <- p + geom_segment(data = rearr[rearr$type == "fission",],
-                 aes(y = 2.05, yend = 1.95,
-                     x = cumstart + ((cumend - cumstart) / 2), 
-                     xend = cumstart + ((cumend - cumstart) / 2)),
-                 color = 'red') +
+p <- p + geom_segment(data = rearr[rearr$event == "fission",],
+                 aes(y = 2.05, yend = 1.95,x = x_1, xend = x_1,
+                 color = 'red')) +
   ylim(c(0,3)) +
   # add labels specifying the breakpoints
-  geom_label_repel(data = rearr[rearr$type == "fission",],
-                   aes(x = cumstart + ((cumend - cumstart) / 2),
+  geom_label_repel(data = rearr[rearr$event == "fission",],
+                   aes(x = x_1,
                        y = 2.05, 
-                       label = paste0(comma(refstart, scale = .000001,
+                       label = paste0(comma(refstart_1, scale = .000001,
                                             accuracy = 0.01), "-", 
-                                      comma(refend, scale = .000001,
+                                      comma(refend_1, scale = .000001,
                                             accuracy = 0.01), "Mb")),
                   direction = "y",
                   nudge_y = 1,
@@ -104,22 +113,19 @@ p <- p + geom_segment(data = rearr[rearr$type == "fission",],
                   force_pull = 0
                   )
 
+p
+
 # plot translocations
-p <- p + geom_segment(data = rearr[rearr$type == "translocation",],
-              aes(x = cumstart, xend = cumend, y = 1.99, yend = 1.99),
+p <- p + geom_segment(data = rearr[rearr$event == "translocation",],
+              aes(x = x_1, xend = x_2, y = 1.99, yend = 1.99),
               linewidth = 1.5, color = "darkblue") +
   # and ynversions
-  geom_segment(data = rearr[rearr$type == "inversion",],
-               aes(x = cumstart, xend = cumend, y = 2.01, yend = 2.01),
+  geom_segment(data = rearr[rearr$event == "inversion",],
+               aes(x = x_1, xend = x_2, y = 2.01, yend = 2.01),
                linewidth = 1.5, color = "orange")
-# and last fusions
-fusions <- rearr[rearr$type == "fusion",] %>%
-  group_by(note) %>%
-  summarize(cumpos_start = min(cumstart), cumpos_end = max(cumstart))
-
 p <- p +
-  geom_curve(data = fusions,
-            aes(x = cumpos_start, xend= cumpos_end, y = 1.99, yend = 1.99),
+  geom_curve(data = rearr[rearr$event == "fusion",],
+            aes(x = x_1, xend= x_2, y = 1.99, yend = 1.99),
             color = "red", curvature = 0.2)
 # save the plot
 ggsave(sub(".txt$","_plot.svg",args[3]),width = 12, height = 5)

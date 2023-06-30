@@ -3,6 +3,7 @@ import argparse
 import datetime
 import sys
 from tabulate import tabulate
+from copy import copy
 
 def flip_negative_alignments(qgenome, alnDict_f):
     for chrom in qgenome.keys():
@@ -227,12 +228,85 @@ def find_fissions(blocks):
 		# if the tchrom is the same, but the qchrom is different, we have a fission
 		if blocks[i]['tchrom'] == blocks[i-1]['tchrom'] and blocks[i]['qchrom'] != blocks[i-1]['qchrom']:
 			# find the breaking point
-			breaking_point = (blocks[i-1]['tend'], blocks[i]['tstart'])
+			breaking_point = (blocks[i]['previous_tpos'], blocks[i]['tstart'])
 			# and their new chroms
-			new_chroms = (blocks[i-1]['qchrom'], blocks[i]['qchrom'])
+			new_chroms = [blocks[i-1]['qchrom'],blocks[i-1]['qstart'],blocks[i-1]['qend'], blocks[i]['qchrom'],blocks[i]['qstart'],blocks[i]['qend']]
 			# append to the fissions list
 			fissions.append({'tchrom':blocks[i]['tchrom'], 'breaking_point':breaking_point, 'new_chroms':new_chroms})
 	return fissions
+
+# define a funciton to find the preceding block for a given target chromosome and position
+def find_preceding_block(blocks, tchrom, tpos):
+	# make a deepcopy of the blocks
+	cblocks = copy.deepcopy(blocks)
+	# sort copy by tchrom and tstart
+	cblocks = sorted(cblocks, key=lambda k: (k['tchrom'], k['tstart']))
+	# find the index of the block with this tchrom and tpos
+	index = [i for i,x in enumerate(cblocks) if x['tchrom'] == tchrom and x['tstart'] == tpos][0]
+	try:
+		# return the block before this one
+		# check if the chromosome of the preceeding block is the same
+		if cblocks[index - 1]['tchrom'] == tchrom:
+			# then the preceeding block pos should be the tend of this block
+			tpos = cblocks[index - 1]['tend']
+		# otherwise it is at the start of a new chromosome, so we set it to 0
+		else:
+			tpos = 0
+	# if we get an index error, we're at the first block, so we set the tpos to 0
+	except IndexError:
+		tpos = 0
+	# return the tpos
+	return tpos
+
+# define a function to find the following block for a given target chromosome and position
+def find_following_block(blocks, tchrom, tpos, refgenome):
+	# make a deepcopy of the blocks
+	cblocks = copy.deepcopy(blocks)
+	# sort copy by tchrom and tstart
+	cblocks = sorted(cblocks, key=lambda k: (k['tchrom'], k['tstart']))
+	# find the index of the block with this tchrom and tpos
+	index = [i for i,x in enumerate(cblocks) if x['tchrom'] == tchrom and x['tstart'] == tpos][0]
+	try:
+		# return the block after this one
+		# check if the chromosome of the following block is the same
+		if cblocks[index + 1]['tchrom'] == tchrom:
+			# then the following block pos should be the tstart of this block
+			tpos = cblocks[index + 1]['tstart']
+		# otherwise it is at the end of a chromosome, so we set it to the length of the chromosome
+		else:
+			tpos = refgenome[tchrom]['length']
+	# if we get an index error, we're at the last block, so we set the tpos to the length of the chromosome
+	except IndexError:
+		tpos = refgenome[tchrom]['length']
+	# return the tpos
+	return tpos
+	
+# add previous and next target position for the same chromosome to each block
+def add_previous_next_target_position(blocks, refgenome):
+	for i,block in enumerate(blocks):
+		# if it's the first block, we set the previous tpos to 0
+		if i == 0:
+			block['previous_tpos'] = 0
+		# otherwise check if the previous block is on the same chromosome
+		elif blocks[i-1]['tchrom'] == block['tchrom']:
+			# if it is, we set the previous tpos to the tend of the previous block
+			block['previous_tpos'] = blocks[i-1]['tend']
+		# otherwise we set it to 0
+		else:
+			block['previous_tpos'] = 0
+		# if it's the last block, we set the next tpos to the length of the chromosome
+		if i == len(blocks) - 1:
+			block['next_tpos'] = refgenome[block['tchrom']]['length']
+		# otherwise check if the next block is on the same chromosome
+		elif blocks[i+1]['tchrom'] == block['tchrom']:
+			# if it is, we set the next tpos to the tstart of the next block
+			block['next_tpos'] = blocks[i+1]['tstart']
+		# otherwise we set it to the length of the chromosome
+		else:
+			block['next_tpos'] = refgenome[block['tchrom']]['length']
+	# return the blocks
+	return blocks
+
 
 # define a function to find fusion events
 def find_fusions(blocks):
@@ -243,12 +317,25 @@ def find_fusions(blocks):
 	for i in range(1,len(blocks)):
 		# if the qchrom is the same, but the tchrom is different, we have a fusion
 		if blocks[i]['qchrom'] == blocks[i-1]['qchrom'] and blocks[i]['tchrom'] != blocks[i-1]['tchrom']:
+			# first fusion point is the end of the previous block is direciton is forward, otherwise it is the start of the previous block
+			if blocks[i-1]['direction'] == 'forward':
+				fusion_point_1 = (blocks[i-1]['tchrom'],blocks[i-1]['tend'],blocks[i-1]['next_tpos'])
+			else:
+				fusion_point_1 = (blocks[i-1]['tchrom'],blocks[i-1]['tstart'], blocks[i-1]['previous_tpos'])
+			# second fusion point is the start of the current block is direciton is forward, otherwise it is the end of the current block
+			if blocks[i]['direction'] == 'forward':
+				fusion_point_2 = (blocks[i]['tchrom'],blocks[i]['tstart'],blocks[i]['previous_tpos'])
+			else:
+				fusion_point_2 = (blocks[i]['tchrom'],blocks[i]['tend'],blocks[i]['next_tpos'])
+			#print(fusion_point_1, fusion_point_2)
+			#print(blocks[i-1], blocks[i])
 			# find the fusion point
-			fusion_point = (blocks[i-1]['qend'], blocks[i]['qstart'])
+			fused_to = (blocks[i]['qchrom'], blocks[i-1]['qend'], blocks[i]['qstart'])
 			# and their old chroms
-			old_chroms = ("{}:{}".format(blocks[i-1]['tchrom'], blocks[i-1]['tend']), "{}:{}".format(blocks[i]['tchrom'], blocks[i-1]['tstart']))
+			old_chroms = ("{}:{}".format(blocks[i-1]['tchrom'], blocks[i-1]['tend']), "{}:{}".format(blocks[i]['tchrom'], blocks[i]['tstart']))
 			# append to the fusions list
-			fusions.append({'qchrom':blocks[i]['qchrom'], 'fusion_point':fusion_point, 'old_chroms':old_chroms})
+			fusions.append({'qchrom':blocks[i]['qchrom'], 'fusion_point_1':fusion_point_1, 'fusion_point_2': fusion_point_2,
+		    'fusion_cords_in_query':fused_to})
 	# return the fusions
 	return fusions
 
@@ -289,6 +376,64 @@ def merge_consecutive_blocks(blocks, maxdist=5000000):
 			blocks_merged.append(blocks[i])
 	# return the merged blocks
 	return blocks_merged
+
+# define a function to parse the different dictionaries into a ready-ro-write table
+def parse_blocks_to_table(event, etype):
+	if etype == 'fission':
+		refchrom_1 = event['tchrom']
+		refstart_1 = event['breaking_point'][0]
+		refend_1 = event['breaking_point'][1]
+		refchrom_2 = "NA"
+		refstart_2 = "NA"
+		refend_2 = "NA"
+		querychrom_1,querystart_1,queryend_1,querychrom_2,querystart_2,queryend_2 = event['new_chroms']
+		note = "NA"
+	elif etype == 'fusion':
+		refchrom_1,refstart_1,refend_1 = event['fusion_point_1']
+		refchrom_2,refstart_2,refend_2 = event['fusion_point_2']
+		querychrom_1 = event['fusion_cords_in_query'][0]
+		querystart_1 = event['fusion_cords_in_query'][1]
+		queryend_1 = event['fusion_cords_in_query'][2]
+		querychrom_2 = "NA"
+		querystart_2 = "NA"
+		queryend_2 = "NA"
+		note = "NA"
+	elif etype == 'translocation':
+		t = event[0]
+		note = event[1]['swapped_with']['tchrom'] + ":" + str(event[0]['tstart']) + "-" + str(event[0]['tend'])
+		refchrom_1,refstart_1,refend_1,refchrom_2,refstart_2,refend_2 = t['tchrom'],t['previous_tpos'],t['tstart'],t['tchrom'],t['tend'],t['next_tpos']
+		querychrom_1,querystart_1,queryend_1 = t['qchrom'],t['qstart'],t['qend']
+		querychrom_2,querystart_2,queryend_2 = "NA","NA","NA"
+	elif etype == 'inversion':
+		refchrom_1,refstart_1,refend_1,refchrom_2,refstart_2,refend_2 = event['tchrom'],event['previous_tpos'],event['tstart'],event['tchrom'],event['tend'],event['next_tpos']
+		querychrom_1,querystart_1,queryend_1 = event['qchrom'],event['qstart'],event['qend']
+		querychrom_2,querystart_2,queryend_2 = "NA","NA","NA"
+		note = "NA"
+	# add all keys, including etype to a neat dictionary
+	parsed_d = {
+		'refchrom_1':refchrom_1,
+		'refstart_1':refstart_1,
+		'refend_1':refend_1,
+		'refchrom_2':refchrom_2,
+		'refstart_2':refstart_2,
+		'refend_2':refend_2,
+		'querychrom_1':querychrom_1,
+		'querystart_1':querystart_1,
+		'queryend_1':queryend_1,
+		'querychrom_2':querychrom_2,
+		'querystart_2':querystart_2,
+		'queryend_2':queryend_2,
+		'note':note,
+		'event':etype
+	}
+	# return the dictionary
+	return parsed_d
+
+
+
+
+
+
 
 
 
@@ -371,6 +516,9 @@ blocks = merge_consecutive_dicts(synmap_tf, maxdiff=5000000)
 # remove blocks shorter than length_limit
 blocks = remove_short_blocks(blocks, length_limit)
 
+# add previous and next target position for the same chromosome to each block
+blocks = add_previous_next_target_position(blocks, refgenome)
+
 # identify inversions
 blocks, inversions = identify_inversions(blocks)
 
@@ -430,30 +578,26 @@ with open(args.outprefix + "_syntenymap.txt", 'w') as outfile:
 	for item in synmap_t:
 		outfile.write("{}\t{}\t{}\t{}\n".format(item['tchrom'], item['tpos'], item['qchrom'], item['qpos']))
 
-# and last write the rearrangements to a file
-with open(args.outprefix + "_rearrangements.txt", 'w') as outfile:
-	# write the header
-	outfile.write("type\trefchrom\trefstart\trefend\tquerychrom\tquerystart\tqueryend\tnote\n")
-	# then write the fissions
-	for fission in fissions:
-		outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format("fission", fission['tchrom'], fission['breaking_point'][0], fission['breaking_point'][1], 'Na', 'Na', 'Na', "Split_into:" + fission['new_chroms'][0] + "&" + fission['new_chroms'][1]))
-	# then the fusions
-	for i,fusion in enumerate(fusions):
-		# we write the fusions on two lines each, numbering them to store the fusion event
-		fusion_id = "fusion_{}".format(i)
-		chrom_startpos = fusion['old_chroms'][0].split(":")[0]
-		startpos = fusion['old_chroms'][0].split(":")[1]
-		chrom_endpos = fusion['old_chroms'][1].split(":")[0]
-		endpos = fusion['old_chroms'][1].split(":")[1]
-		outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format("fusion", chrom_startpos, startpos, 'Na', fusion['qchrom'], fusion['fusion_point'][0], fusion['fusion_point'][1], fusion_id + "_from:" + fusion['old_chroms'][0] + "&" + fusion['old_chroms'][1]))
-		outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format("fusion", chrom_endpos, endpos, 'Na', fusion['qchrom'], fusion['fusion_point'][0], fusion['fusion_point'][1], fusion_id + "_from:" + fusion['old_chroms'][0] + "&" + fusion['old_chroms'][1]))
-	# then the inversions
-	for inversion in inversions:
-		outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format("inversion", inversion['tchrom'], inversion['tstart'], inversion['tend'], inversion['qchrom'], inversion['qstart'], inversion['qend'], "Na"))
-	# then the translocations
-	for translocation in translocations:
-		outfile.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format("translocation", translocation[0]['tchrom'], translocation[0]['tstart'], translocation[0]['tend'], translocation[0]['qchrom'], translocation[0]['qstart'], translocation[0]['qend'], "swapped_with:{}:{}-{}".format(translocation[1]['swapped_with']['tchrom'], translocation[1]['swapped_with']['tstart'], translocation[1]['swapped_with']['tend'])))
 
+# make a more writeable dict from all different rearrangements
+combined_dict = []
+# parse all events to the combined dict
+for fission in fissions:
+	combined_dict.append(parse_blocks_to_table(fission, 'fission'))
+for fusion in fusions:
+	combined_dict.append(parse_blocks_to_table(fusion, 'fusion'))
+for inversion in inversions:
+	combined_dict.append(parse_blocks_to_table(inversion, 'inversion'))
+for translocation in translocations:
+	combined_dict.append(parse_blocks_to_table(translocation, 'translocation'))
+# now write this to  the file
+with open(args.outprefix + "_rearrangements.txt", 'w') as outfile:
+	# start with writing the dict keys as headers
+	outfile.write("{}\n".format("\t".join(combined_dict[0].keys())))
+	# then write each dict as a line
+	for item in combined_dict:
+		outfile.write("{}\n".format("\t".join([str(x) for x in item.values()])))
+# and then we're done
 # print that we're done, and give a summary on how many of each rearrengement type we found
 sys.stderr.write("Done at {} with the following summary:\n".format(datetime.datetime.now()))
 sys.stderr.write("Found {} fissions\n".format(len(fissions)))
