@@ -309,7 +309,7 @@ def add_previous_next_target_position(blocks, refgenome):
 
 
 # define a function to find fusion events
-def find_fusions(blocks):
+def find_fusions(blocks, refgenome):
 	fusions = []
 	# sort the blocks by qchrom and then qstart
 	blocks = sorted(blocks, key=lambda k: (k['qchrom'], k['qstart']))
@@ -321,12 +321,19 @@ def find_fusions(blocks):
 			if blocks[i-1]['direction'] == 'forward':
 				fusion_point_1 = (blocks[i-1]['tchrom'],blocks[i-1]['tend'],blocks[i-1]['next_tpos'])
 			else:
-				fusion_point_1 = (blocks[i-1]['tchrom'],blocks[i-1]['tstart'], blocks[i-1]['previous_tpos'])
+				fusion_point_1 = (blocks[i-1]['tchrom'],blocks[i-1]['previous_tpos'],blocks[i-1]['tstart'])
 			# second fusion point is the start of the current block is direciton is forward, otherwise it is the end of the current block
 			if blocks[i]['direction'] == 'forward':
-				fusion_point_2 = (blocks[i]['tchrom'],blocks[i]['tstart'],blocks[i]['previous_tpos'])
+				fusion_point_2 = (blocks[i]['tchrom'],blocks[i]['previous_tpos'],blocks[i]['tstart'])
 			else:
 				fusion_point_2 = (blocks[i]['tchrom'],blocks[i]['tend'],blocks[i]['next_tpos'])
+			# find the cumulative position of the fusion points
+			cumulative_fusion_point_1 = fusion_point_1[1] + refgenome[fusion_point_1[0]]['cumpos']
+			cumulative_fusion_point_2 = fusion_point_2[1] + refgenome[fusion_point_2[0]]['cumpos']
+			# if secont point is smaller then first, swap them
+			if cumulative_fusion_point_2 < cumulative_fusion_point_1:
+				fusion_point_1, fusion_point_2 = fusion_point_2, fusion_point_1
+			#print(cumulative_fusion_point_1, cumulative_fusion_point_2)
 			#print(fusion_point_1, fusion_point_2)
 			#print(blocks[i-1], blocks[i])
 			# find the fusion point
@@ -489,6 +496,8 @@ alnDict = parsePAF(aln)
 
 refgenome = read_ref_index(rgenome)
 qgenome = read_ref_index(qgenome)
+# add cumulative position to the refgenome
+refgenome = add_cumulative_starting_position(refgenome, plotlen=None, spacing=0)
 
 # filter paf
 alnDict_f = filterPAF(alnDict, minlen=10000, primary=True, minmapq=40, minpid=0.9, only_ref_chroms=True, only_query_chroms=False, ref_chroms=refgenome.keys(), query_chroms=qgenome.keys())
@@ -546,8 +555,8 @@ for chrom in refgenome.keys():
 # fetch fissions
 fissions = find_fissions(blocks)
 
-# fetch fusions
-fusions = find_fusions(blocks)
+# fetch fusions,
+fusions = find_fusions(blocks, refgenome)
 
 # merge consecutive blocks
 blocks = merge_consecutive_blocks(blocks, maxdist=5000000)
