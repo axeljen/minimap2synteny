@@ -1,4 +1,4 @@
-""" this script will take alignments against a common reference genome and prepare a 
+""" This script will take alignments against a common reference genome and prepare a 
 synteny map in a progressive manner
 """
 # import modules
